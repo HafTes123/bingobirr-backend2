@@ -1,0 +1,210 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USERS & AUTHENTICATION
+// ============================================
+
+model User {
+  id           String      @id @default(uuid())
+  phone        String      @unique @db.VarChar(20) // Primary identifier: +251...
+  fullName     String      @db.VarChar(100)
+  birthdate    DateTime
+  passwordHash String      @db.VarChar(255) // Argon2id hash
+  role         UserRole    @default(PLAYER)
+  status       UserStatus  @default(ACTIVE)
+  wallet       Wallet?
+  transactions Transaction[]
+  cards        BingoCard[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  // Session tracking (single device enforcement)
+  currentDeviceId  String?   @db.VarChar(64)
+  lastLoginAt      DateTime?
+  loginAttempts    Int       @default(0)
+  lockedUntil      DateTime?
+}
+
+enum UserRole {
+  PLAYER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+// ============================================
+// WALLET
+// ============================================
+
+model Wallet {
+  id               String   @id @default(uuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balanceBirr      Decimal  @default(0) @db.Decimal(12, 2)
+  bunaPoints       Int      @default(0)
+  pendingWithdrawal Decimal @default(0) @db.Decimal(12, 2)
+  updatedAt        DateTime @updatedAt
+}
+
+// ============================================
+// TRANSACTIONS (Deposits & Withdrawals)
+// ============================================
+
+model Transaction {
+  id               String        @id @default(uuid())
+  transactionId    String        @unique @db.VarChar(64) // UNIQUE CONSTRAINT: prevents replay attacks
+  userId           String
+  user             User          @relation(fields: [userId], references: [id])
+  amount           Decimal       @db.Decimal(12, 2)
+  paymentMethod    PaymentMethod
+  type             TransactionType
+  receiptImagePath String?       @db.VarChar(255)
+  status           TxStatus      @default(PENDING)
+  reviewedBy       String?       @db.VarChar(64)
+  reviewedAt       DateTime?
+  note             String?       @db.VarChar(500)
+  ocrExtractedId   String?       @db.VarChar(64)
+  ipAddress        String?       @db.VarChar(45)
+  createdAt        DateTime      @default(now())
+
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+}
+
+enum PaymentMethod {
+  TELEBIRR
+  CBE
+  AWASH_BANK
+  BOA
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+}
+
+enum TxStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+  FAILED
+}
+
+// ============================================
+// AUDIT LOG (Immutable)
+// ============================================
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  adminId      String   @db.VarChar(64)
+  userId       String?  @db.VarChar(64)
+  action       String   @db.VarChar(200)
+  entityType   String?  @db.VarChar(50)
+  entityId     String?  @db.VarChar(64)
+  amount       Decimal? @db.Decimal(12, 2)
+  description  String?  @db.VarChar(500)
+  ipAddress    String   @db.VarChar(45)
+  createdAt    DateTime @default(now())
+
+  @@index([adminId])
+  @@index([createdAt])
+}
+
+// ============================================
+// GAME PATTERNS
+// ============================================
+
+model GamePattern {
+  id        String        @id @default(uuid())
+  name      String        @db.VarChar(100)
+  grid      Json          // 5x5 boolean grid
+  gameMode  GameMode
+  isActive  Boolean       @default(true)
+  createdBy String?       @db.VarChar(64)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+}
+
+enum GameMode {
+  FIXED_PRIZE
+  POOL_BASED
+  FAST_BINGO
+  DAILY_MEGA_EVENT
+  BUNA_JACKPOT
+}
+
+// ============================================
+// GAME SESSIONS
+// ============================================
+
+model GameSession {
+  id              String    @id @default(uuid())
+  gameMode        GameMode
+  patternId       String
+  status          GameStatus @default(WAITING)
+  prizePotBirr    Decimal   @default(0) @db.Decimal(12, 2)
+  drawnNumbers    Json?     // Array of drawn numbers
+  currentBall     Int?
+  winnerId        String?
+  winnerName      String?   @db.VarChar(100)
+  winnerPrize     Decimal?  @db.Decimal(12, 2)
+  totalPlayers    Int       @default(0)
+  purchaseWindowSecs Int    @default(120)
+  drawIntervalSecs Int      @default(4)
+  startedAt       DateTime?
+  endedAt         DateTime?
+  createdAt       DateTime  @default(now())
+}
+
+enum GameStatus {
+  WAITING
+  PURCHASE_OPEN
+  IN_PROGRESS
+  ENDED
+  CANCELLED
+}
+
+// ============================================
+// BINGO CARDS
+// ============================================
+
+model BingoCard {
+  id        String      @id @default(uuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id])
+  sessionId String
+  matrix    Json        // 5x5 grid of numbers/FREE
+  marked    Json        // 5x5 grid of booleans
+  ticketPrice Decimal   @db.Decimal(12, 2)
+  isWinner  Boolean     @default(false)
+  createdAt DateTime    @default(now())
+
+  @@index([sessionId])
+  @@index([userId])
+}
+
+// ============================================
+// SYSTEM SETTINGS
+// ============================================
+
+model SystemSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique @db.VarChar(100)
+  value       String   @db.VarChar(500)
+  description String?  @db.VarChar(200)
+  updatedAt   DateTime @updatedAt
+}
